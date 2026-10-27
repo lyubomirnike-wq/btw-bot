@@ -17,18 +17,21 @@ def send(text):
     urllib.request.urlopen(req, timeout=20)
 
 price = get_price()
-level = int(price // STEP * STEP)
+nearest = int(round(price / STEP) * STEP)
 
 try:
-    last = int(open(STATE_FILE).read().strip())
+    anchor = int(open(STATE_FILE).read().strip())
 except Exception:
-    last = None
+    anchor = None
 
-if last is None:
+if anchor is None:
     send(f"✅ Бот запущено. BTC зараз ${price:,.0f}")
-elif level > last:
-    send(f"🟢 BTC перетнув ${level:,} вгору\nЗараз: ${price:,.0f}")
-elif level < last:
-    send(f"🔴 BTC впав нижче ${last:,}\nЗараз: ${price:,.0f}")
+    anchor = nearest
+elif price >= anchor + STEP:
+    anchor = int(price // STEP * STEP)
+    send(f"🟢 BTC ${price:,.0f}")
+elif price <= anchor - STEP:
+    anchor = int(-(-price // STEP) * STEP)
+    send(f"🔴 BTC ${price:,.0f}")
 
-open(STATE_FILE, "w").write(str(level))
+open(STATE_FILE, "w").write(str(anchor))
