@@ -2,7 +2,7 @@ import os, json, urllib.request
 
 TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
-STEP = 1000
+STEP = 500
 STATE_FILE = "last_level.txt"
 
 def get_price():
