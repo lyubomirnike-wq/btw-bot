@@ -10,8 +10,10 @@ TZ = ZoneInfo("Europe/Berlin")
 TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 STEP = 1000
+BUF = 150  # буфер проти спаму біля рівня
 STATE_FILE = "last_level.txt"
 UA = {"User-Agent": "btc-bot"}
+GRAN = 1800  # свічка = 30 хвилин
 
 def get_json(url):
     req = urllib.request.Request(url, headers=UA)
@@ -25,23 +27,32 @@ def get_candles():
     end = int(time.time())
     start = end - 24 * 3600
     url = ("https://api.exchange.coinbase.com/products/BTC-USD/candles"
-           f"?granularity=900&start={start}&end={end}")
+           f"?granularity={GRAN}&start={start}&end={end}")
     return sorted(get_json(url), key=lambda c: c[0])
 
 def make_chart(candles, price, path="chart.png"):
-    t = [datetime.fromtimestamp(c[0], tz=TZ) for c in candles]
-    closes = [c[4] for c in candles]
-    up = closes[-1] >= closes[0]
-    color = "#16c784" if up else "#ea3943"
+    GREEN, RED = "#16c784", "#ea3943"
     fig, ax = plt.subplots(figsize=(8, 4.5), dpi=150)
     fig.patch.set_facecolor("#0e1117"); ax.set_facecolor("#0e1117")
-    ax.plot(t, closes, color=color, linewidth=2)
-    ax.fill_between(t, closes, min(closes), color=color, alpha=0.15)
-    ax.set_ylim(min(closes) * 0.998, max(closes) * 1.002)
+    width = 0.7 * (GRAN / 86400)
+    for c in candles:
+        x = mdates.date2num(datetime.fromtimestamp(c[0], tz=TZ))
+        low, high, op, cl = c[1], c[2], c[3], c[4]
+        col = GREEN if cl >= op else RED
+        ax.vlines(x, low, high, color=col, linewidth=1)
+        ax.bar(x, max(abs(cl - op), 1), bottom=min(op, cl), width=width, color=col, linewidth=0)
+    lows = [c[1] for c in candles]; highs = [c[2] for c in candles]
+    pad = (max(highs) - min(lows)) * 0.05
+    ax.set_ylim(min(lows) - pad, max(highs) + pad)
+    ax.set_xlim(mdates.date2num(datetime.fromtimestamp(candles[0][0], tz=TZ)) - width,
+                mdates.date2num(datetime.fromtimestamp(candles[-1][0], tz=TZ)) + width * 4)
+    ax.axhline(price, color="#9aa0a6", linewidth=0.8, linestyle="--")
+    ax.xaxis_date(tz=TZ)
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=TZ))
     ax.tick_params(colors="#9aa0a6")
     ax.yaxis.set_major_formatter(lambda v, _: f"${v:,.0f}")
-    for s in ax.spines.values(): s.set_visible(False)
+    ax.yaxis.tick_right()
+    for sp in ax.spines.values(): sp.set_visible(False)
     ax.grid(color="#2a2f3a", linewidth=0.6)
     ax.set_title(f"BTC/USD · 24 год · ${price:,.0f}", color="white", fontsize=14, loc="left")
     fig.tight_layout()
@@ -69,21 +80,21 @@ def report(emoji, price):
     send_photo(make_chart(candles, price), caption)
 
 price = get_price()
-nearest = int(round(price / STEP) * STEP)
+level = int(price // STEP * STEP)
 
 try:
-    anchor = int(open(STATE_FILE).read().strip())
+    anchor = int(open(STATE_FILE).read().strip()) // STEP * STEP
 except Exception:
     anchor = None
 
 if anchor is None:
     report("✅", price)
-    anchor = nearest
-elif price >= anchor + STEP:
-    anchor = int(price // STEP * STEP)
+    anchor = level
+elif price >= anchor + STEP + BUF:
+    anchor = level
     report("🟢", price)
-elif price <= anchor - STEP:
-    anchor = int(-(-price // STEP) * STEP)
+elif price <= anchor - BUF:
+    anchor = level
     report("🔴", price)
 
 open(STATE_FILE, "w").write(str(anchor))
