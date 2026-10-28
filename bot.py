@@ -3,7 +3,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 TZ = ZoneInfo("Europe/Berlin")
 
@@ -13,7 +13,7 @@ STEP = 1000
 BUF = 150  # буфер проти спаму біля рівня
 STATE_FILE = "last_level.txt"
 UA = {"User-Agent": "btc-bot"}
-GRAN = 1800  # свічка = 30 хвилин
+GRAN = 900  # свічка = 15 хвилин (дозволено: 300, 900, 3600, 21600)
 
 def get_json(url):
     req = urllib.request.Request(url, headers=UA)
@@ -26,8 +26,9 @@ def get_price():
 def get_candles():
     end = int(time.time())
     start = end - 24 * 3600
+    iso = lambda t: datetime.fromtimestamp(t, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     url = ("https://api.exchange.coinbase.com/products/BTC-USD/candles"
-           f"?granularity={GRAN}&start={start}&end={end}")
+           f"?granularity={GRAN}&start={iso(start)}&end={iso(end)}")
     return sorted(get_json(url), key=lambda c: c[0])
 
 def make_chart(candles, price, path="chart.png"):
@@ -39,7 +40,7 @@ def make_chart(candles, price, path="chart.png"):
         x = mdates.date2num(datetime.fromtimestamp(c[0], tz=TZ))
         low, high, op, cl = c[1], c[2], c[3], c[4]
         col = GREEN if cl >= op else RED
-        ax.vlines(x, low, high, color=col, linewidth=1)
+        ax.vlines(x, low, high, color=col, linewidth=0.8)
         ax.bar(x, max(abs(cl - op), 1), bottom=min(op, cl), width=width, color=col, linewidth=0)
     lows = [c[1] for c in candles]; highs = [c[2] for c in candles]
     pad = (max(highs) - min(lows)) * 0.05
