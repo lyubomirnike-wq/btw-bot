@@ -10,7 +10,6 @@ TZ = ZoneInfo("Europe/Berlin")
 TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_IDS = [c.strip() for c in os.environ["TELEGRAM_CHAT_ID"].split(",") if c.strip()]
 STEP = 1000          # крок рівнів
-BUF = 100            # зворотний рух для повторного сповіщення (проти спаму)
 STATE_FILE = "last_level.txt"
 UA = {"User-Agent": "btc-bot"}
 GRAN = 900           # свічка = 15 хвилин (дозволено: 300, 900, 3600, 21600)
@@ -31,7 +30,7 @@ def get_candles():
            f"?granularity={GRAN}&start={iso(start)}&end={iso(end)}")
     return sorted(get_json(url), key=lambda c: c[0])
 
-def make_chart(candles, price, pct, path="chart.png"):
+def make_chart(candles, price, pct, level=None, path="chart.png"):
     BG, PANEL, GRID, TXT = "#0b0e14", "#0f131b", "#1d2330", "#8b93a3"
     GREEN, RED = "#26a69a", "#ef5350"
     fig = plt.figure(figsize=(10, 6.4), dpi=140)
@@ -49,6 +48,8 @@ def make_chart(candles, price, pct, path="chart.png"):
     width = 0.72 * (GRAN / 86400)
     lows = [c[1] for c in candles]; highs = [c[2] for c in candles]
     lo, hi = min(lows), max(highs)
+    if level is not None:
+        lo, hi = min(lo, level), max(hi, level)
     pad = (hi - lo) * 0.10
     # свічки + обсяг
     for x, c in zip(xs, candles):
@@ -65,6 +66,12 @@ def make_chart(candles, price, pct, path="chart.png"):
         if lo - pad <= lvl <= hi + pad:
             ax.axhline(lvl, color="#2c3446", linewidth=0.9, linestyle=(0, (4, 4)), zorder=0)
         lvl += STEP
+    # виділений рівень, про який сповіщення
+    if level is not None:
+        ax.axhline(level, color="#f5c542", linewidth=1.6, zorder=1)
+        ax.text(0.006, level, f" ${level:,} ", transform=ax.get_yaxis_transform(), va="bottom", ha="left",
+                color="#0b0e14", fontsize=9.5, fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.2", fc="#f5c542", ec="none"))
     # макс/мін за добу
     ih = highs.index(hi); il = lows.index(lo)
     ax.annotate(f"${hi:,.0f}", (xs[ih], hi), xytext=(0, 6), textcoords="offset points",
@@ -115,44 +122,36 @@ def send_photo(path, caption):
         except Exception as e:
             print("не вдалось надіслати в", chat, e)
 
-def report(text, price):
+def report(text, price, level=None):
     candles = get_candles()
     pct = (price - candles[0][3]) / candles[0][3] * 100
     caption = f"{text}\nЗараз: ${price:,.0f}\n24 год: {pct:+.2f}%"
-    send_photo(make_chart(candles, price, pct), caption)
+    send_photo(make_chart(candles, price, pct, level), caption)
 
-def decide(state, price):
-    """state = (L, dir). Повертає (новий_state, текст_або_None)."""
-    L, d = state
-    if d == "up":
-        if price >= L + STEP:
-            n = int(price // STEP * STEP)
-            return (n, "up"), f"🟢 BTC перетнув ${n:,} вгору"
-        if price <= L - BUF:
-            return (L, "down"), f"🔴 BTC впав нижче ${L:,}"
-    else:
-        if price <= L - STEP:
-            n = int(-(-price // STEP) * STEP)
-            return (n, "down"), f"🔴 BTC впав нижче ${n:,}"
-        if price >= L + BUF:
-            return (L, "up"), f"🟢 BTC піднявся вище ${L:,}"
-    return state, None
+def decide(anchor, price):
+    """anchor = останній рівень. Сповіщення лише коли ціна дійшла до anchor+STEP або anchor-STEP."""
+    if price >= anchor + STEP:
+        n = int(price // STEP * STEP)
+        return n, f"🟢 BTC досяг ${n:,}", n
+    if price <= anchor - STEP:
+        n = int(-(-price // STEP) * STEP)
+        return n, f"🔴 BTC впав до ${n:,}", n
+    return anchor, None, None
 
-def load_state():
+def load_anchor():
     try:
-        a, b = open(STATE_FILE).read().split()
-        return int(a), b
+        return int(open(STATE_FILE).read().split()[0]) // STEP * STEP
     except Exception:
         return None
 
 if __name__ == "__main__":
     price = get_price()
-    state = load_state()
-    if state is None:
-        state = (int(price // STEP * STEP), "up")
-        report("✅ Бот запущено", price)
+    anchor = load_anchor()
+    if anchor is None:
+        anchor = int(round(price / STEP) * STEP)
+        report("✅ Бот запущено", price, anchor)
     else:
-        state, text = decide(state, price)
+        anchor, text, level = decide(anchor, price)
         if text:
-            report(text, price)
-    open(STATE_FILE, "w").write(f"{state[0]} {state[1]}")
+            report(text, price, level)
+    open(STATE_FILE, "w").write(str(anchor))
